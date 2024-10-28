@@ -1,4 +1,8 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+mod matrix;
+mod rand;
+
+use matrix::Matrix;
+use rand::rand;
 
 /// The available maze generation tactics,
 /// they were chosed based on their different strengts.
@@ -30,42 +34,34 @@ pub enum GenTactic {
 pub struct Maze {
     width: usize,
     height: usize,
-    grid: Vec<u8>, // TODO: change Vec<u8> for a type `Matrix`
-}
-
-/// This shouldn't be used for anything serious where the random
-/// distribution & security matters.
-/// TODO: make this generic
-fn rand(end: u32) -> usize {
-    let mut steps = 0;
-
-    // Keep generating if you keep getting SystemTime errors
-    loop {
-        if steps == 100 {
-            break 0;
-        }
-
-        let curr_time = SystemTime::now().duration_since(UNIX_EPOCH);
-        if let Ok(rand) = curr_time {
-            break (rand.subsec_nanos() % end) as usize;
-        }
-
-        steps += 1;
-    }
+    grid: Matrix<u8>,
 }
 
 impl Maze {
     /// The minimum width and height you should provide are both 3 and 3,
     /// if the values you provide are smaller than 3 `new` will return a 3x3 maze.
-    pub fn new(width: usize, height: usize) -> Self {
-        let width = std::cmp::max(3, width);
-        let height = std::cmp::max(3, height);
+    ///
+    /// You should also take into account that both the width and the height
+    /// should be odd. If you provide an invalid size the function will increase
+    /// your sizes by 1 to make them odd.
 
-        let mut grid = vec![1; width * height];
+    pub fn new(width: usize, height: usize) -> Self {
+        let mut width = std::cmp::max(3, width);
+        let mut height = std::cmp::max(3, height);
+
+        if width % 2 == 0 {
+            width += 1;
+        }
+
+        if height % 2 == 0 {
+            height += 1;
+        }
+
+        let mut grid = Matrix::new(height, width, 1);
         for i in 1..height {
             for j in 1..width {
                 if i % 2 == 1 && j % 2 == 1 {
-                    grid[i * width + j] = 0;
+                    grid.update(i, j, 0);
                 }
             }
         }
@@ -77,35 +73,10 @@ impl Maze {
         }
     }
 
-    /// Check if row `i`, column `j` exists in the grid.
-    fn in_bounds(&self, i: usize, j: usize) -> bool {
-        if i >= self.height || j >= self.width {
-            false
-        } else {
-            true
-        }
-    }
-    /// Sets the value of the cell at the `i`-th row, column `j` to `val`
-    /// and returns if it found the cell to update. (e.g. self.at(...) didn't return [None])
-    fn update(&mut self, i: usize, j: usize, val: u8) -> bool {
-        if self.in_bounds(i, j) {
-            self.grid[i * self.width + j] = val;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Returns the values of the cell at the row `i`, column `j` if it
-    /// exists.
-    pub fn at(&self, i: usize, j: usize) -> Option<u8> {
-        if !self.in_bounds(i, j) {
-            return None;
-        }
-
-        Some(self.grid[i * self.width + j])
-    }
-
+    /// Generates a new maze based on the generation
+    /// tactic provided.
+    ///
+    /// `gen` will mutate the current grid.
     pub fn gen(&mut self, tactic: GenTactic) {
         match tactic {
             GenTactic::Dfs => self.rand_dfs(),
@@ -114,7 +85,7 @@ impl Maze {
         }
 
         // TODO: self.find_exit();
-        self.debug_rep();
+        // self.debug_rep();
     }
 
     /// This ia function ment to be used for debuggin the generated maze
@@ -122,9 +93,9 @@ impl Maze {
     /// e.g. there are no weird patterns.
     pub fn debug_rep(&self) {
         // TODO: print into a log file
-        for i in 0..self.width {
-            for j in 0..self.height {
-                if let Some(cell) = self.at(i, j) {
+        for i in 0..self.height {
+            for j in 0..self.width {
+                if let Some(cell) = self.grid.at(i, j) {
                     if cell == 1 {
                         eprint!("#");
                     } else {
@@ -137,12 +108,22 @@ impl Maze {
     }
 
     fn rand_dfs(&mut self) {
-        // TODO: change this to Matrix
-        let mut connected = vec![vec![false; self.width]; self.width];
+        let mut connected = Matrix::new(self.height, self.width, false);
         let dir_i: Vec<isize> = vec![1, -1, 0, 0];
         let dir_j: Vec<isize> = vec![0, 0, -1, 1];
 
-        let mut stack: Vec<(usize, usize)> = Vec::from([(1, 1)]);
+        let mut start_cell = (rand(self.height), rand(self.width));
+        while start_cell.0 % 2 != 1 || start_cell.1 % 2 != 1 {
+            if start_cell.0 % 2 != 1 {
+                start_cell.0 = rand(self.height);
+            }
+
+            if start_cell.1 % 2 != 1 {
+                start_cell.1 = rand(self.width);
+            }
+        }
+
+        let mut stack: Vec<(usize, usize)> = Vec::from([start_cell]);
         while !stack.is_empty() {
             let curr_cell = stack.iter().last().unwrap();
 
@@ -170,19 +151,22 @@ impl Maze {
 
                 let next_cell = (next_cell.0 as usize, next_cell.1 as usize);
 
-                if self.in_bounds(next_cell.0, next_cell.1) {
-                    if !connected[next_cell.0][next_cell.1] {
-                        self.update(
-                            (next_cell.0 as isize - dir_i[dir]) as usize,
-                            (next_cell.1 as isize - dir_j[dir]) as usize,
-                            0,
-                        );
-                        connected[next_cell.0][next_cell.1] = true;
-                        stack.push(next_cell);
-                        broke_wall = true;
+                let next_has_conn = connected.at(next_cell.0, next_cell.1);
+                if next_has_conn.is_none() {
+                    continue;
+                }
 
-                        break;
-                    }
+                if !next_has_conn.unwrap() {
+                    self.grid.update(
+                        (next_cell.0 as isize - dir_i[dir]) as usize,
+                        (next_cell.1 as isize - dir_j[dir]) as usize,
+                        0,
+                    );
+                    connected.update(next_cell.0, next_cell.1, true);
+                    stack.push(next_cell);
+
+                    broke_wall = true;
+                    break;
                 }
             }
 
@@ -206,38 +190,36 @@ mod tests {
 
     #[test]
     fn dfs_gen_conne() {
-        // TODO:
-        // To test a RANDOM dfs maze gen we can check
-        // if all cells at (i, j) where i and j are odd are connected
-        // to at least another cell
-
         const WIDTH: usize = 11;
         const HEIGHT: usize = 11;
 
         let mut maze = Maze::new(WIDTH, HEIGHT);
         maze.gen(GenTactic::Dfs);
-    }
 
-    #[test]
-    fn at_out_of_bounds() {
-        const WIDTH: usize = 3;
-        const HEIGHT: usize = 3;
+        let mut conn = Matrix::new(HEIGHT, WIDTH, false);
 
-        let maze = Maze::new(WIDTH, HEIGHT);
-        assert_eq!(maze.at(2, 4), None);
-        assert_eq!(maze.at(0, 4), None);
-        assert_eq!(maze.at(5, 4), None);
-        assert_eq!(maze.at(5, 2), None);
-    }
+        let dir_i = [-1, 1, 0, 0];
+        let dir_j = [0, 0, -1, 1];
+        for i in 1..(HEIGHT - 1) {
+            for j in 1..(WIDTH - 1) {
+                for dir in 0..4 {
+                    let cell = (
+                        (i as isize + dir_i[dir]) as usize,
+                        (j as isize + dir_j[dir]) as usize,
+                    );
 
-    #[test]
-    fn at_in_of_bounds() {
-        const WIDTH: usize = 3;
-        const HEIGHT: usize = 3;
+                    if maze.grid.at(cell.0, cell.1).unwrap() == 0 {
+                        conn.update(i, j, true);
+                    }
+                }
+            }
+        }
 
-        let maze = Maze::new(WIDTH, HEIGHT);
-        assert_eq!(maze.at(0, 0), Some(1));
-        assert_eq!(maze.at(1, 1), Some(0));
+        for i in 1..HEIGHT {
+            for j in 1..WIDTH {
+                assert_ne!(conn.at(i, j), None);
+            }
+        }
     }
 
     #[test]
@@ -255,23 +237,33 @@ mod tests {
         assert_eq!(maze.height, 3);
 
         let maze = Maze::new(4, 3);
-        assert_eq!(maze.width, 4);
+        assert_eq!(maze.width, 5);
         assert_eq!(maze.height, 3);
+
+        let maze = Maze::new(3, 4);
+        assert_eq!(maze.width, 3);
+        assert_eq!(maze.height, 5);
+
+        let maze = Maze::new(8, 8);
+        assert_eq!(maze.width, 9);
+        assert_eq!(maze.height, 9);
     }
 
     #[test]
-    fn initial_grid() {
-        const WIDTH: usize = 3;
-        const HEIGHT: usize = 3;
+    fn grid_init() {
+        for width in 3..50 {
+            for height in 3..50 {
+                let maze = Maze::new(width, height);
+                maze.debug_rep();
 
-        let maze = Maze::new(WIDTH, HEIGHT);
-
-        for i in 0..WIDTH {
-            for j in 0..HEIGHT {
-                if i % 2 == 1 && j % 2 == 1 {
-                    assert_eq!(maze.at(i, j), Some(0));
-                } else {
-                    assert_eq!(maze.at(i, j), Some(1));
+                for i in 0..maze.height {
+                    for j in 0..maze.width {
+                        if i % 2 == 1 && j % 2 == 1 {
+                            assert_eq!(maze.grid.at(i, j), Some(0));
+                        } else {
+                            assert_eq!(maze.grid.at(i, j), Some(1));
+                        }
+                    }
                 }
             }
         }
