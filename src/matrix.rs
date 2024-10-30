@@ -1,3 +1,6 @@
+/// An abstraction over a 1D array to simulate how a matrix work
+/// without having the extra vector to worry about.
+
 #[derive(Debug)]
 pub struct Matrix<T> {
     rows: usize,

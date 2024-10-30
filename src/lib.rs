@@ -1,8 +1,13 @@
+mod dsu;
 mod matrix;
 mod rand;
 
+use dsu::Dsu;
 use matrix::Matrix;
-use rand::rand;
+use std::{
+    fs::{self, File},
+    io::Write,
+};
 
 /// The available maze generation tactics,
 /// they were chosed based on their different strengts.
@@ -85,26 +90,25 @@ impl Maze {
         }
 
         // TODO: self.find_exit();
-        // self.debug_rep();
     }
 
     /// This ia function ment to be used for debuggin the generated maze
     /// such that you can check if the generated maze is how it should look
     /// e.g. there are no weird patterns.
-    pub fn debug_rep(&self) {
-        // TODO: print into a log file
+    pub fn debug_rep(&self, id: usize) {
         for i in 0..self.height {
             for j in 0..self.width {
                 if let Some(cell) = self.grid.at(i, j) {
                     if cell == 1 {
-                        eprint!("#");
+                        eprintln!("#");
                     } else {
-                        eprint!(".");
+                        eprintln!(".");
                     }
                 }
             }
             eprintln!();
         }
+        eprintln!();
     }
 
     fn rand_dfs(&mut self) {
@@ -112,14 +116,14 @@ impl Maze {
         let dir_i: Vec<isize> = vec![1, -1, 0, 0];
         let dir_j: Vec<isize> = vec![0, 0, -1, 1];
 
-        let mut start_cell = (rand(self.height), rand(self.width));
+        let mut start_cell = (rand::rand(self.height), rand::rand(self.width));
         while start_cell.0 % 2 != 1 || start_cell.1 % 2 != 1 {
             if start_cell.0 % 2 != 1 {
-                start_cell.0 = rand(self.height);
+                start_cell.0 = rand::rand(self.height);
             }
 
             if start_cell.1 % 2 != 1 {
-                start_cell.1 = rand(self.width);
+                start_cell.1 = rand::rand(self.width);
             }
         }
 
@@ -131,7 +135,7 @@ impl Maze {
             while dirs.len() != 4 {
                 // I don't want to include a crate just for this, I don't care
                 // about the secuirty of maze generation :)
-                let dir = rand(4);
+                let dir = rand::rand(4);
 
                 if !dirs.contains(&dir) {
                     dirs.push(dir);
@@ -176,7 +180,49 @@ impl Maze {
         }
     }
     fn rand_kruskal(&mut self) {
-        todo!();
+        let mut edges: Vec<[(isize, isize); 2]> =
+            Vec::with_capacity(2 * (self.width / 2 * self.height / 2));
+
+        for i in (1..self.height).step_by(2) {
+            for j in (1..self.width).step_by(2) {
+                // N
+                edges.push([(i as isize, j as isize), (-1, 0)]);
+
+                // E
+                edges.push([(i as isize, j as isize), (0, 1)]);
+            }
+        }
+
+        rand::shuffle(&mut edges);
+
+        while !edges.is_empty() {
+            let [curr_cell, dir] = edges.pop().unwrap();
+            let next_cell = (curr_cell.0 + 2 * dir.0, curr_cell.1 + 2 * dir.1);
+
+            if next_cell.0 < 0 || next_cell.1 < 0 {
+                continue;
+            }
+
+            if !self
+                .grid
+                .in_bounds(next_cell.0 as usize, next_cell.1 as usize)
+            {
+                continue;
+            }
+
+            let wall = (curr_cell.0 + dir.0, curr_cell.1 + dir.1);
+
+            let next_cell: usize = next_cell.0 as usize * self.width + next_cell.1 as usize;
+            let curr_cell: usize = curr_cell.0 as usize * self.width + curr_cell.1 as usize;
+
+            let mut dsu = Dsu::new(self.width * self.height);
+
+            if !dsu.same_set(curr_cell, next_cell) {
+                dsu.merge(curr_cell, next_cell);
+
+                self.grid.update(wall.0 as usize, wall.1 as usize, 0);
+            }
+        }
     }
 
     fn wilson(&mut self) {
@@ -200,8 +246,8 @@ mod tests {
 
         let dir_i = [-1, 1, 0, 0];
         let dir_j = [0, 0, -1, 1];
-        for i in 1..(HEIGHT - 1) {
-            for j in 1..(WIDTH - 1) {
+        for i in (1..HEIGHT).step_by(2) {
+            for j in (1..WIDTH).step_by(2) {
                 for dir in 0..4 {
                     let cell = (
                         (i as isize + dir_i[dir]) as usize,
@@ -215,9 +261,43 @@ mod tests {
             }
         }
 
-        for i in 1..HEIGHT {
-            for j in 1..WIDTH {
-                assert_ne!(conn.at(i, j), None);
+        for i in (1..HEIGHT).step_by(2) {
+            for j in (1..WIDTH).step_by(2) {
+                assert_eq!(conn.at(i, j), Some(true));
+            }
+        }
+    }
+
+    #[test]
+    fn kruskal_gen_conne() {
+        const WIDTH: usize = 11;
+        const HEIGHT: usize = 11;
+
+        let mut maze = Maze::new(WIDTH, HEIGHT);
+        maze.gen(GenTactic::Kruskal);
+
+        let mut conn = Matrix::new(HEIGHT, WIDTH, false);
+
+        let dir_i = [-1, 1, 0, 0];
+        let dir_j = [0, 0, -1, 1];
+        for i in (1..HEIGHT).step_by(2) {
+            for j in (1..WIDTH).step_by(2) {
+                for dir in 0..4 {
+                    let cell = (
+                        (i as isize + dir_i[dir]) as usize,
+                        (j as isize + dir_j[dir]) as usize,
+                    );
+
+                    if maze.grid.at(cell.0, cell.1).unwrap() == 0 {
+                        conn.update(i, j, true);
+                    }
+                }
+            }
+        }
+
+        for i in (1..HEIGHT).step_by(2) {
+            for j in (1..WIDTH).step_by(2) {
+                assert_eq!(conn.at(i, j), Some(true));
             }
         }
     }
@@ -254,7 +334,6 @@ mod tests {
         for width in 3..50 {
             for height in 3..50 {
                 let maze = Maze::new(width, height);
-                maze.debug_rep();
 
                 for i in 0..maze.height {
                     for j in 0..maze.width {
